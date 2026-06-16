@@ -1,204 +1,194 @@
-# Illustrator MCP Server (Windows & macOS)
+# Illustrator MCP Vectorizer
 
-Welcome to the **Illustrator MCP Server**! 🎨🚀
+Automate Adobe Illustrator from AI agents and convert bitmap artwork into editable `.ai` files.
 
-This project allows AI agents to **directly create vector graphics** inside **Adobe Illustrator** using natural language prompts.  
-It works by sending ExtendScript commands to Illustrator via a local MCP (Model Context Protocol) server.
+This project started from `krVatsal/illustrator-mcp` and adds a practical bitmap-to-vector pipeline:
 
-> Imagine simply describing what you want — like *"draw a small coffee shop during rain"* — and Illustrator brings it to life!
+- Run ExtendScript in Adobe Illustrator through an MCP server.
+- Capture the Illustrator window for visual QA.
+- Convert PNG/JPEG artwork into Illustrator paths.
+- Choose between deterministic local vectorization, app-icon silhouette tracing, and native Illustrator Image Trace.
+- Save repeatable `.jsx` scripts and final `.ai` files from the command line or MCP clients.
 
-Works on **Windows** (COM automation) and **macOS** (AppleScript/osascript).
+## Demo
 
----
+### App icon mode
 
-## ✨ Features
-- Control Adobe Illustrator programmatically using AI prompts
-- Send ExtendScript (.jsx) scripts directly to Illustrator
-- Capture screenshots of the Illustrator window
-- Open-source and lightweight
-- **Cross-platform:** Windows & macOS
-- **Multi-client:** Works with Claude Desktop, Claude Code, Cursor, VS Code Copilot, and JetBrains Copilot
+Use this mode for simple app icons where subtle gradients should not split one visual layer into many fragments.
 
----
+![Vectorized travel icon](docs/assets/travel-icon-vectorized.png)
 
-## 💻 Installation
+### Illustrator Image Trace mode
 
-### Prerequisites
-- **Python 3.12+** — [Download Python](https://www.python.org/downloads/)
-- **Adobe Illustrator** installed and running
-- **macOS only:** Grant Automation permissions when prompted (System Settings → Privacy & Security → Automation)
+Use this mode for complex flat illustrations, JPEG inputs, and artwork where Illustrator's native smoothing gives better visual results.
 
-### 1. Clone the repository
+![Image traced lighthouse island](docs/assets/lighthouse-island-image-trace.png)
 
-   ```bash
-   git clone https://github.com/krVatsal/illustrator-mcp.git
-   cd illustrator-mcp
-   ```
+## When to use each mode
 
-### 2. Create a virtual environment
+| Mode | Best for | Tradeoff |
+| --- | --- | --- |
+| `color` | Flat logos, icons, posters, and controlled source art | Fully local and deterministic, but JPEG noise can create extra paths |
+| `icon` | App-style icons with one rounded background and light foreground glyphs | Very clean layers for that specific icon shape family |
+| `image-trace` / `image_trace` | Complex illustrations and noisy JPEGs | Requires Illustrator execution, but usually gives the cleanest result |
 
-**macOS / Linux:**
+## Requirements
+
+- Python 3.12+
+- Adobe Illustrator installed
+- Windows: `pywin32` is installed from dependencies
+- macOS: grant Automation permissions when prompted
+
+Optional:
+
+- `OPENAI_API_KEY` for OpenAI vision-based layer naming
+- A local llama.cpp multimodal model for offline layer naming
+
+## Install
+
+```bash
+git clone https://github.com/yingy-buxing/illustrator-mcp-vectorizer.git
+cd illustrator-mcp-vectorizer
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+On macOS/Linux:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-**Windows:**
-```bash
-python -m venv .venv
-.\.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
-> On macOS, `pywin32` is automatically skipped. No extra macOS packages required.
 
-### 4. Start the MCP Server (manual / debug mode)
+## CLI usage
+
+Generate a reusable JSX file and an output path for Illustrator to save:
+
+```bash
+python -m illustrator.vectorize_cli input.png ^
+  --mode color ^
+  --jsx output.jsx ^
+  --output-ai output.ai ^
+  --colors 32 ^
+  --max-dimension 1200 ^
+  --min-area 40
+```
+
+For app icons with a gradient background and light foreground glyph:
+
+```bash
+python -m illustrator.vectorize_cli icon.png ^
+  --mode icon ^
+  --jsx icon.jsx ^
+  --output-ai icon.ai ^
+  --max-dimension 1024 ^
+  --min-area 80
+```
+
+For complex JPEG illustrations, use native Illustrator Image Trace:
+
+```bash
+python -m illustrator.vectorize_cli illustration.jpg ^
+  --mode image-trace ^
+  --jsx illustration-trace.jsx ^
+  --output-ai illustration-trace.ai ^
+  --colors 48 ^
+  --max-dimension 1200 ^
+  --trace-median-filter 3
+```
+
+Run the generated JSX inside Illustrator with the MCP `run` tool, or use the MCP tool below with `execute: true`.
+
+## MCP server
+
+Start the server:
 
 ```bash
 python -m illustrator
 ```
 
-### Run with one script (cross-platform)
+Example client configuration:
 
-```bash
-bash run_server.sh
-```
-
-This script auto-detects your platform, creates a `.venv`, installs dependencies, and starts the server.
-
----
-
-## 🔌 Client Configuration
-
-The server uses **stdio transport** — compatible with all major MCP clients.
-
-> **Important:** Do NOT start the server manually when using it through a client. The client starts and manages the server process automatically.
-
-### Claude Desktop
-
-**macOS** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "illustrator": {
-      "command": "/path/to/illustrator-mcp/.venv/bin/python3",
+      "command": "C:\\path\\to\\repo\\.venv\\Scripts\\python.exe",
       "args": ["-m", "illustrator"]
     }
   }
 }
 ```
 
-**Windows** — edit `%APPDATA%\Claude\claude_desktop_config.json`:
+The server exposes these core tools:
+
+- `run`: execute ExtendScript in Illustrator
+- `view`: capture the Illustrator window
+- `vectorize_bitmap`: convert a bitmap into a `.jsx` script and optionally execute it/save `.ai`
+- `get_prompt_suggestions`, `get_system_prompt`, `get_prompting_tips`, `get_advanced_template`, `help`: prompt helpers inherited from the original project
+
+Example `vectorize_bitmap` arguments:
+
 ```json
 {
-  "mcpServers": {
-    "illustrator": {
-      "command": "C:\\Users\\<YourUser>\\illustrator-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "illustrator"]
-    }
-  }
+  "image_path": "E:\\input.jpg",
+  "output_path": "E:\\output.ai",
+  "jsx_path": "E:\\output.jsx",
+  "vector_mode": "image_trace",
+  "colors": 48,
+  "max_dimension": 1200,
+  "trace_median_filter": 3,
+  "execute": true
 }
 ```
 
-### Claude Code (CLI)
+Use `vector_mode: "color"` for deterministic local tracing, `vector_mode: "icon"` for app-icon silhouettes, and `vector_mode: "image_trace"` for Illustrator Image Trace.
 
-A `.claude/mcp.json` is included in the repo. Claude Code will auto-detect it. Or add manually:
+## Layer planning
+
+Local vectorization can optionally rename layers with a visual planner:
+
+- `layer_provider: "auto"` uses OpenAI vision when `OPENAI_API_KEY` is available, otherwise falls back to heuristic layers.
+- `layer_provider: "openai"` requires an OpenAI API key.
+- `layer_provider: "local"` uses a local llama.cpp multimodal model.
+- `layer_provider: "none"` disables semantic layer planning.
+
+Strict validation is available with `require_visual_model: true`; the tool stops before generating JSX if the visual planner does not complete.
+
+## Codex skill
+
+This repo includes a skill at:
+
+```text
+skills/illustrator-vectorizer
+```
+
+Use it when you want Codex to choose the best vectorization mode, run the pipeline, inspect previews, and hand back `.ai`/`.jsx` outputs. To install it locally, copy that folder into your Codex skills directory:
+
+```powershell
+Copy-Item -Recurse .\skills\illustrator-vectorizer C:\Users\Administrator\.codex\skills\illustrator-vectorizer
+```
+
+## Development
+
+Run tests:
 
 ```bash
-claude mcp add illustrator python3 -- -m illustrator
+python -m unittest discover -s tests -v
 ```
 
-### GitHub Copilot (VS Code)
+Important files:
 
-A `.vscode/mcp.json` is included in the repo. VS Code (1.99+) will auto-detect it. Or add to your `settings.json`:
+- `illustrator/server.py`: MCP tools and Illustrator execution
+- `illustrator/vectorizer.py`: deterministic local color/icon vectorization
+- `illustrator/image_trace.py`: native Illustrator Image Trace JSX generation
+- `illustrator/vectorize_cli.py`: command line entry point
+- `skills/illustrator-vectorizer/SKILL.md`: Codex skill workflow
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "illustrator": {
-        "type": "stdio",
-        "command": "python3",
-        "args": ["-m", "illustrator"]
-      }
-    }
-  }
-}
-```
----
+## Notes
 
-## 🎯 Enhanced Prompt System
-
-This MCP server now includes an advanced prompt system to help you create better content! Use these new tools:
-
-- **`get_prompt_suggestions`** - Get categorized prompt examples for different types of content
-- **`get_system_prompt`** - Get the optimal system prompt for AI guidance
-- **`get_prompting_tips`** - Get tips for creating more effective prompts
-- **`get_advanced_template`** - Get structured templates for complex design tasks
-- **`help`** - Display comprehensive help and guidance
-
-### 📚 Prompt Categories Available:
-- 🎨 Basic Shapes & Geometry
-- 📝 Typography & Text  
-- 🏢 Logos & Branding
-- 🌆 Illustrations & Scenes
-- 🎭 Icons & UI Elements
-- 🎨 Artistic & Creative
-- 📊 Charts & Infographics
-- 🏷️ Print & Layout
-
-### 💡 Quick Start with Prompts
-Try asking: *"Get me prompt suggestions for logos"* or *"Show me prompting tips"*
-
-For detailed examples and templates, see [PROMPT_EXAMPLES.md](./PROMPT_EXAMPLES.md)
-
----
-
-## 📋 Sample Prompts I Tried
-
-Here are some prompts I used along with the results it generated:
-
-- **Prompt 1:**  
-  *Design a clean, minimal vector art of a small coffee shop during rain, featuring a simple storefront, puddles on the street, and gentle grey clouds in the sky.*
-
-- **Prompt 2:**  
-  *Create a watercolor-style illustration of the Mumbai skyline at sunset.*
-
-- **Prompt 3:**  
-  *Create a modern, minimalistic logo for a tech startup called 'NeuraTech'.*
-
-*(See attached images for the results!)*
-
----
-
-## 🍎 macOS Notes
-
-- Adobe Illustrator must be installed and running
-- On first use, macOS will ask for **Automation permission** — allow your terminal/IDE to control Illustrator
-- If you see "Application not running" errors, open Illustrator first
-- Screenshots capture the full screen (Illustrator should be in foreground)
-
-## 🪟 Windows Notes
-
-- Adobe Illustrator must be installed
-- The `pywin32` package is required (installed automatically)
-- Illustrator scripting must be enabled
-
----
-
-
-## 📢 Contributing
-
-Pull requests are welcome!  
-Feel free to open issues for feature requests, bugs, or suggestions.
-![Stars](https://img.shields.io/github/stars/krVatsal/illustrator-mcp)
-![Forks](https://img.shields.io/github/forks/krVatsal/illustrator-mcp)
-![License](https://img.shields.io/github/license/krVatsal/illustrator-mcp)
-
----
-
-Happy creating! 🌈💛
+- `.env.local` is ignored and can hold local API keys.
+- Generated `.ai` files are Adobe Illustrator documents; the `.jsx` files are reproducible scripts used to create them.
+- JPEG sources often need `image-trace` mode or preprocessing because compression artifacts become tiny vector fragments.

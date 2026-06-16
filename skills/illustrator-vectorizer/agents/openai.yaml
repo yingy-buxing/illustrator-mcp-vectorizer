@@ -1,0 +1,4 @@
+interface:
+  display_name: "Illustrator Vectorizer"
+  short_description: "Convert bitmaps into editable Adobe Illustrator AI files."
+  default_prompt: "Vectorize this bitmap into an editable Illustrator .ai file and choose the best tracing mode."

@@ -1,3 +1,7 @@
-from .server import main
+def main(*args, **kwargs):
+    from .server import main as server_main
 
-__all__ = ['main']
+    return server_main(*args, **kwargs)
+
+
+__all__ = ["main"]

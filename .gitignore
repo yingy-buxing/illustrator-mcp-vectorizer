@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .qodo
+
+# Local secrets
+.env.local

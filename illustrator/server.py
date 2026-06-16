@@ -8,6 +8,7 @@ import logging
 import time
 import json
 import sys
+from pathlib import Path
 
 import mcp.types as types
 from mcp.server.models import InitializationOptions
@@ -38,12 +39,29 @@ try:
 except ImportError:
     from platform_backend import get_backend
 
+try:
+    from .image_trace import ImageTraceOptions, generate_image_trace_jsx, prepare_image_trace_source
+except ImportError:
+    from image_trace import ImageTraceOptions, generate_image_trace_jsx, prepare_image_trace_source
+
+try:
+    from .vectorizer import VectorizerOptions, generate_illustrator_jsx, vectorize_bitmap, vectorize_icon_silhouette
+except ImportError:
+    from vectorizer import VectorizerOptions, generate_illustrator_jsx, vectorize_bitmap, vectorize_icon_silhouette
+
+try:
+    from .visual_layers import apply_visual_layer_plan
+except ImportError:
+    from visual_layers import apply_visual_layer_plan
+
 # Set up logging
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 server = Server("illustrator")
 
@@ -98,6 +116,124 @@ async def handle_list_tools() -> list[types.Tool]:
                     "code": {"type": "string", "description": "ExtendScript code to execute."}
                 },
                 "required": ["code"],
+            },
+        ),
+        types.Tool(
+            name="vectorize_bitmap",
+            description=(
+                "Convert a bitmap image into layered vector paths, generate Illustrator JSX, "
+                "optionally execute it through Illustrator, and save an .ai file"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Absolute or working-directory-relative path to the source bitmap.",
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Optional .ai file path to save from Illustrator. Defaults to <image>_vectorized.ai when execute is true.",
+                    },
+                    "jsx_path": {
+                        "type": "string",
+                        "description": "Optional path where the generated JSX should be written.",
+                    },
+                    "execute": {
+                        "type": "boolean",
+                        "description": "Whether to execute the generated JSX through Illustrator. Defaults to true.",
+                    },
+                    "colors": {
+                        "type": "integer",
+                        "minimum": 2,
+                        "maximum": 256,
+                        "description": "Optional color count. If omitted, the vectorizer chooses one automatically.",
+                    },
+                    "max_colors": {
+                        "type": "integer",
+                        "minimum": 2,
+                        "maximum": 256,
+                        "description": "Upper bound for automatic color clustering. Defaults to 12.",
+                    },
+                    "max_dimension": {
+                        "type": "integer",
+                        "minimum": 16,
+                        "description": "Resize longest bitmap dimension before tracing. Defaults to 512.",
+                    },
+                    "min_area": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Ignore connected color regions smaller than this many pixels.",
+                    },
+                    "simplify_tolerance": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Ramer-Douglas-Peucker contour simplification tolerance.",
+                    },
+                    "bezier_smoothing": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Bezier handle smoothing amount for fitted paths.",
+                    },
+                    "layer_provider": {
+                        "type": "string",
+                        "enum": ["auto", "openai", "local", "heuristic", "none"],
+                        "description": "Layer planner. 'local' uses llama.cpp VLM, 'auto' uses OpenAI vision when OPENAI_API_KEY is set, otherwise heuristic.",
+                    },
+                    "vision_model": {
+                        "type": "string",
+                        "description": "Optional OpenAI vision-capable model for layer planning.",
+                    },
+                    "local_cli_path": {
+                        "type": "string",
+                        "description": "Optional path to llama-mtmd-cli.exe for local VLM layer planning.",
+                    },
+                    "local_model_path": {
+                        "type": "string",
+                        "description": "Optional path to local VLM .gguf model.",
+                    },
+                    "local_mmproj_path": {
+                        "type": "string",
+                        "description": "Optional path to local multimodal projector .gguf.",
+                    },
+                    "local_timeout": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Timeout in seconds for local VLM layer planning. Defaults to 300.",
+                    },
+                    "require_visual_model": {
+                        "type": "boolean",
+                        "description": "If true, stop before JSX generation unless the visual model successfully assigns layers.",
+                    },
+                    "vector_mode": {
+                        "type": "string",
+                        "enum": ["color", "icon", "image_trace"],
+                        "description": "Vectorization mode. 'image_trace' uses Illustrator's native Image Trace after optional preprocessing.",
+                    },
+                    "trace_median_filter": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Median filter size for image_trace preprocessing. Defaults to 3; use 0 to disable.",
+                    },
+                    "trace_path_fitting": {
+                        "type": "number",
+                        "description": "Illustrator Image Trace path fitting. Defaults to 2.",
+                    },
+                    "trace_corner_angle": {
+                        "type": "integer",
+                        "description": "Illustrator Image Trace corner angle. Defaults to 20.",
+                    },
+                    "trace_noise": {
+                        "type": "integer",
+                        "description": "Illustrator Image Trace noise fidelity. Defaults to 8.",
+                    },
+                    "trace_ignore_white": {
+                        "type": "boolean",
+                        "description": "Tell Illustrator Image Trace to ignore white areas.",
+                    },
+                },
+                "required": ["image_path"],
             },
         ),
         types.Tool(
@@ -181,6 +317,134 @@ def run_illustrator_script(code: str) -> list[types.TextContent]:
         logging.error(f"Failed to execute script: {str(e)}")
         return [types.TextContent(type="text", text=f"Failed to execute script: {str(e)}")]
 
+def vectorize_bitmap_tool(arguments: dict | None) -> list[types.TextContent]:
+    if not arguments or "image_path" not in arguments:
+        return [types.TextContent(type="text", text="image_path is required")]
+
+    try:
+        options = VectorizerOptions(
+            colors=arguments.get("colors"),
+            max_colors=arguments.get("max_colors", 12),
+            max_dimension=arguments.get("max_dimension", 512),
+            min_area=arguments.get("min_area", 16),
+            simplify_tolerance=arguments.get("simplify_tolerance", 1.6),
+            bezier_smoothing=arguments.get("bezier_smoothing", 0.25),
+        )
+        execute = arguments.get("execute", True)
+        output_path = arguments.get("output_path") or (_default_ai_output_path(arguments["image_path"]) if execute else None)
+        vector_mode = arguments.get("vector_mode", "color")
+        if vector_mode == "image_trace":
+            trace_options = ImageTraceOptions(
+                max_colors=arguments.get("colors") or arguments.get("max_colors", 48),
+                max_dimension=arguments.get("max_dimension", 1200),
+                median_filter_size=arguments.get("trace_median_filter", 3),
+                path_fitting=arguments.get("trace_path_fitting", 2.0),
+                corner_angle=arguments.get("trace_corner_angle", 20),
+                noise_fidelity=arguments.get("trace_noise", 8),
+                ignore_white=arguments.get("trace_ignore_white", False),
+            )
+            trace_base = Path(arguments.get("jsx_path") or output_path or _default_ai_output_path(arguments["image_path"]))
+            prepared_path = trace_base.with_name(f"{trace_base.stem}_source.png")
+            prepared_path, (width, height) = prepare_image_trace_source(arguments["image_path"], prepared_path, trace_options)
+            jsx = generate_image_trace_jsx(prepared_path, output_path, width, height, trace_options)
+
+            jsx_path = arguments.get("jsx_path")
+            if jsx_path:
+                with open(jsx_path, "w", encoding="utf-8") as f:
+                    f.write(jsx)
+
+            execution_result = None
+            output_exists = False
+            if execute:
+                execution_result = run_illustrator_script(jsx)[0].text
+                output_exists = bool(output_path and Path(output_path).exists())
+
+            result = {
+                "summary": {
+                    "source_path": arguments["image_path"],
+                    "prepared_source_path": str(prepared_path),
+                    "width": width,
+                    "height": height,
+                    "mode": "image_trace",
+                    "max_colors": trace_options.max_colors,
+                },
+                "layer_plan": {
+                    "provider": "illustrator-image-trace",
+                    "model": None,
+                    "applied": False,
+                    "assigned_shapes": 0,
+                    "reason": "native Illustrator tracing does not provide semantic layer assignments",
+                },
+                "output_path": output_path,
+                "output_exists": output_exists,
+                "jsx_path": jsx_path,
+                "executed": execute,
+                "execution_result": execution_result,
+            }
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        if vector_mode == "icon":
+            document = vectorize_icon_silhouette(arguments["image_path"], options)
+        else:
+            document = vectorize_bitmap(arguments["image_path"], options)
+        layer_provider = arguments.get("layer_provider", "auto")
+        if vector_mode == "icon" and "layer_provider" not in arguments:
+            layer_provider = "none"
+        layer_plan = apply_visual_layer_plan(
+            document,
+            arguments["image_path"],
+            provider=layer_provider,
+            model=arguments.get("vision_model"),
+            local_cli_path=arguments.get("local_cli_path"),
+            local_model_path=arguments.get("local_model_path"),
+            local_mmproj_path=arguments.get("local_mmproj_path"),
+            local_timeout=arguments.get("local_timeout", 300),
+        )
+        require_visual_model = arguments.get("require_visual_model", False)
+        if require_visual_model and not layer_plan.applied:
+            result = {
+                "summary": document.summary(),
+                "layer_plan": layer_plan.summary(),
+                "output_path": output_path,
+                "output_exists": False,
+                "jsx_path": None,
+                "executed": False,
+                "execution_result": None,
+                "error": "Visual model layer planning is required but did not complete.",
+            }
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        jsx = generate_illustrator_jsx(document, output_path)
+
+        jsx_path = arguments.get("jsx_path")
+        if jsx_path:
+            with open(jsx_path, "w", encoding="utf-8") as f:
+                f.write(jsx)
+
+        execution_result = None
+        output_exists = False
+        if execute:
+            execution_result = run_illustrator_script(jsx)[0].text
+            output_exists = bool(output_path and Path(output_path).exists())
+
+        result = {
+            "summary": document.summary(),
+            "layer_plan": layer_plan.summary(),
+            "output_path": output_path,
+            "output_exists": output_exists,
+            "jsx_path": jsx_path,
+            "executed": execute,
+            "execution_result": execution_result,
+        }
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+    except Exception as e:
+        logging.error(f"Failed to vectorize bitmap: {str(e)}")
+        return [types.TextContent(type="text", text=f"Failed to vectorize bitmap: {str(e)}")]
+
+def _default_ai_output_path(image_path: str | os.PathLike[str]) -> str:
+    path = Path(image_path)
+    return str(path.with_name(f"{path.stem}_vectorized.ai"))
+
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
     logging.info(f"Received tool call: {name} with arguments: {arguments}")
@@ -193,6 +457,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
             logging.warning("No code provided for run tool.")
             return [types.TextContent(type="text", text="No code provided")]
         return run_illustrator_script(arguments["code"])
+
+    elif name == "vectorize_bitmap":
+        return vectorize_bitmap_tool(arguments)
     
     elif name == "get_prompt_suggestions":
         try:
