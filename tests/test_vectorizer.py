@@ -53,6 +53,7 @@ class VectorizerTests(unittest.TestCase):
             os.unlink(image_path)
 
         self.assertIn("#target illustrator", jsx)
+        self.assertIn("UserInteractionLevel.DONTDISPLAYALERTS", jsx)
         self.assertIn("doc.saveAs(outFile)", jsx)
         self.assertIn("pathPoints.add", jsx)
         self.assertIn("PointType.SMOOTH", jsx)

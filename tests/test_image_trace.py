@@ -39,6 +39,7 @@ class ImageTraceTests(unittest.TestCase):
             80,
             ImageTraceOptions(max_colors=24, ignore_white=True),
         )
+        self.assertIn("UserInteractionLevel.DONTDISPLAYALERTS", jsx)
         self.assertIn("placed.trace()", jsx)
         self.assertIn("TRACINGMODECOLOR", jsx)
         self.assertIn("maxColors = 24", jsx)

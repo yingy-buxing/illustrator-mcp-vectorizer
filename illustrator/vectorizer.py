@@ -202,6 +202,7 @@ def generate_illustrator_jsx(document: VectorDocument, output_path: str | os.Pat
     lines: list[str] = [
         "#target illustrator",
         "(function () {",
+        "  app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;",
         "  var doc = app.documents.add(DocumentColorSpace.RGB, "
         f"{_js_number(document.width)}, {_js_number(document.height)});",
         "  doc.rulerUnits = RulerUnits.Points;",

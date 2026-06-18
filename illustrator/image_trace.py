@@ -55,6 +55,7 @@ def generate_image_trace_jsx(
     lines = [
         "#target illustrator",
         "(function () {",
+        "  app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;",
         f"  var inFile = new File({_js_string(_jsx_path(prepared_image_path))});",
         "  if (!inFile.exists) throw new Error('Trace source not found: ' + inFile.fsName);",
         f"  var doc = app.documents.add(DocumentColorSpace.RGB, {_js_number(width)}, {_js_number(height)});",
